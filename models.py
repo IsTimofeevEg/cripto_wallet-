@@ -8,21 +8,37 @@ Base = declarative_base()
 
 
 class TransactionType(enum.Enum):
-    TRANSFER = "transfer"
-    DEPOSIT = "deposit"
-    WITHDRAWAL = "withdrawal"
+    TRANSFER = "TRANSFER"
+    DEPOSIT = "DEPOSIT"
+    WITHDRAWAL = "WITHDRAWAL"
+    EXCHANGE = "EXCHANGE"
+
+
+class ExchangeStatus(enum.Enum):
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 
 class UserStatus(enum.Enum):
-    ACTIVE = "active"
-    BLOCKED = "blocked"
-    PENDING = "pending"
+    ACTIVE = "ACTIVE"
+    BLOCKED = "BLOCKED"
+    PENDING = "PENDING"
 
 
 class SessionStatus(enum.Enum):
-    PENDING = "pending"
-    CONFIRMED = "confirmed"
-    EXPIRED = "expired"
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+    LOGGED_OUT = "LOGGED_OUT"
+
+
+class Theme(enum.Enum):
+    LIGHT = "light"
+    DARK = "dark"
+    BLUE = "blue"
+    GREEN = "green"
 
 
 class User(Base):
@@ -43,12 +59,8 @@ class User(Base):
     sent_transactions = relationship("Transaction", foreign_keys="Transaction.user_id_from", back_populates="user_from")
     received_transactions = relationship("Transaction", foreign_keys="Transaction.user_id_to", back_populates="user_to")
     notifications = relationship("Notification", back_populates="user")
-
-    def has_telegram_linked(self):
-        return bool(self.telegram_id)
-
-    def can_receive_notifications(self):
-        return bool(self.telegram_id)
+    sent_exchanges = relationship("Exchange", foreign_keys="Exchange.user_id_from", back_populates="user_from")
+    received_exchanges = relationship("Exchange", foreign_keys="Exchange.user_id_to", back_populates="user_to")
 
 
 class Session(Base):
@@ -57,8 +69,10 @@ class Session(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'))
     created_date = Column(DateTime, default=func.now())
-    status = Column(Enum(SessionStatus), default=SessionStatus.PENDING)
-    confirmation_code = Column(String(10))
+    last_activity = Column(DateTime, default=func.now())
+    status = Column(Enum(SessionStatus), default=SessionStatus.ACTIVE)
+    ip_address = Column(String(45))
+    user_agent = Column(String(255))
     token = Column(String(255))
 
     # Relationships
@@ -112,11 +126,27 @@ class Transaction(Base):
     commission = relationship("Commission", uselist=False, back_populates="transaction")
     notifications = relationship("Notification", back_populates="transaction")
 
-    def requires_confirmation(self):
-        return self.amount > 0.1
 
-    def can_be_confirmed(self):
-        return self.status == 'pending'
+class Exchange(Base):
+    __tablename__ = 'exchanges'
+
+    id = Column(Integer, primary_key=True)
+    user_id_from = Column(Integer, ForeignKey('users.id'))
+    user_id_to = Column(Integer, ForeignKey('users.id'))
+    currency_from_id = Column(Integer, ForeignKey('currencies.id'))
+    currency_to_id = Column(Integer, ForeignKey('currencies.id'))
+    amount_from = Column(Float, nullable=False)
+    amount_to = Column(Float, nullable=False)
+    status = Column(Enum(ExchangeStatus), default=ExchangeStatus.PENDING)
+    created_date = Column(DateTime, default=func.now())
+    completed_date = Column(DateTime)
+
+    # Relationships
+    user_from = relationship("User", foreign_keys=[user_id_from], back_populates="sent_exchanges")
+    user_to = relationship("User", foreign_keys=[user_id_to], back_populates="received_exchanges")
+    currency_from = relationship("Currency", foreign_keys=[currency_from_id])
+    currency_to = relationship("Currency", foreign_keys=[currency_to_id])
+    notifications = relationship("Notification", back_populates="exchange")
 
 
 class Commission(Base):
@@ -147,26 +177,17 @@ class Notification(Base):
     __tablename__ = 'notifications'
 
     id = Column(Integer, primary_key=True)
-    type = Column(String(50), nullable=False)
+    type = Column(String(50), nullable=False)  # transaction, exchange, system, security
     user_id = Column(Integer, ForeignKey('users.id'))
     transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+    exchange_id = Column(Integer, ForeignKey('exchanges.id'), nullable=True)
+    title = Column(String(100), nullable=False)
     message = Column(Text, nullable=False)
     created_date = Column(DateTime, default=func.now())
     is_read = Column(Boolean, default=False)
+    priority = Column(Integer, default=1)  # 1-low, 2-medium, 3-high
 
     # Relationships
     user = relationship("User", back_populates="notifications")
     transaction = relationship("Transaction", back_populates="notifications")
-
-
-class UserInterface(Base):
-    __tablename__ = 'user_interface'
-
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.id'), unique=True)
-    theme = Column(String(20), default='light')
-    language = Column(String(10), default='ru')
-    notifications_enabled = Column(Boolean, default=True)
-
-    # Relationships
-    user = relationship("User")
+    exchange = relationship("Exchange", back_populates="notifications")
