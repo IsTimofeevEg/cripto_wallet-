@@ -43,49 +43,25 @@ class CryptoManager:
                 if not currency:
                     currency = Currency(**currency_data)
                     session.add(currency)
-                    print(f"✅ Добавлена валюта: {currency_data['name']} ({currency_data['code']})")
 
             session.commit()
 
-            # Теперь инициализируем курсы валют
-            self.initialize_exchange_rates()
-            print("✅ Все валюты и курсы инициализированы")
+            # Инициализируем курсы валют
+            self.update_exchange_rates()
 
         except Exception as e:
-            print(f"❌ Ошибка инициализации валют: {e}")
-            session.rollback()
-        finally:
-            session.close()
-
-    def initialize_exchange_rates(self):
-        """Инициализация курсов валют"""
-        session = db.get_session()
-        try:
-            for currency_code, rate in self.base_rates.items():
-                currency = session.query(Currency).filter_by(code=currency_code).first()
-                if currency:
-                    exchange_rate = session.query(ExchangeRate).filter_by(currency_id=currency.id).first()
-                    if not exchange_rate:
-                        exchange_rate = ExchangeRate(
-                            currency_id=currency.id,
-                            rate_to_usdt=rate
-                        )
-                        session.add(exchange_rate)
-                        print(f"✅ Курс {currency_code}: 1 {currency_code} = {rate:.2f} USDT")
-
-            session.commit()
-        except Exception as e:
-            print(f"❌ Ошибка инициализации курсов: {e}")
+            print(f"Error initializing currencies: {e}")
             session.rollback()
         finally:
             session.close()
 
     def update_exchange_rates(self):
-        """Обновление курсов валют"""
+        """Обновление курсов валют с реальными изменениями"""
         session = db.get_session()
         try:
             for currency_code, base_rate in self.base_rates.items():
-                change_percent = random.uniform(-0.05, 0.05)
+                # Более заметные изменения для демонстрации
+                change_percent = random.uniform(-0.05, 0.05)  # ±5%
                 current_rate = base_rate * (1 + change_percent)
                 self.current_rates[currency_code] = current_rate
 
@@ -103,29 +79,17 @@ class CryptoManager:
                         session.add(exchange_rate)
 
             session.commit()
-            print("✅ Курсы валют обновлены")
+            print("Exchange rates updated successfully")
 
         except Exception as e:
-            print(f"❌ Ошибка обновления курсов: {e}")
+            print(f"Error updating exchange rates: {e}")
             session.rollback()
         finally:
             session.close()
 
     def get_exchange_rate(self, currency_code):
         """Получение текущего курса валюты"""
-        session = db.get_session()
-        try:
-            currency = session.query(Currency).filter_by(code=currency_code).first()
-            if currency:
-                exchange_rate = session.query(ExchangeRate).filter_by(currency_id=currency.id).first()
-                if exchange_rate:
-                    return exchange_rate.rate_to_usdt
-            return self.current_rates.get(currency_code, 1.0)
-        except Exception as e:
-            print(f"❌ Ошибка получения курса {currency_code}: {e}")
-            return 1.0
-        finally:
-            session.close()
+        return self.current_rates.get(currency_code, 1.0)
 
     def convert_to_usdt(self, currency_code, amount):
         """Конвертация суммы в USDT"""
@@ -134,18 +98,19 @@ class CryptoManager:
 
     def get_all_rates(self):
         """Получение всех курсов валют"""
-        session = db.get_session()
-        try:
-            rates = {}
-            exchange_rates = session.query(ExchangeRate).join(Currency).all()
-            for er in exchange_rates:
-                rates[er.currency.code] = er.rate_to_usdt
-            return rates
-        except Exception as e:
-            print(f"❌ Ошибка получения курсов: {e}")
-            return self.current_rates.copy()
-        finally:
-            session.close()
+        return self.current_rates.copy()
+
+    def calculate_exchange_rate(self, from_currency, to_currency, amount):
+        """Расчет курса обмена между двумя валютами"""
+        from_rate = self.get_exchange_rate(from_currency)
+        to_rate = self.get_exchange_rate(to_currency)
+
+        if to_rate == 0:
+            return 0
+
+        # Конвертируем через USDT
+        usdt_amount = amount * from_rate
+        return usdt_amount / to_rate
 
 
 # Создаем экземпляр менеджера

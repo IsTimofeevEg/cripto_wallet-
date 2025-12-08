@@ -28,6 +28,13 @@ class UserStatus(enum.Enum):
     PENDING = "PENDING"
 
 
+class UserRole(enum.Enum):
+    """Роли пользователей в системе"""
+    USER = "USER"  # Обычный пользователь
+    MODERATOR = "MODERATOR"  # Модератор
+    ADMIN = "ADMIN"  # Администратор
+
+
 class SessionStatus(enum.Enum):
     ACTIVE = "ACTIVE"
     EXPIRED = "EXPIRED"
@@ -39,6 +46,9 @@ class Theme(enum.Enum):
     DARK = "dark"
     BLUE = "blue"
     GREEN = "green"
+    PURPLE = "purple"
+    ORANGE = "orange"
+    MODERN = "modern"
 
 
 class User(Base):
@@ -48,10 +58,10 @@ class User(Base):
     phone = Column(String(20), unique=True, nullable=False)
     full_name = Column(String(100), nullable=False)
     status = Column(Enum(UserStatus), default=UserStatus.ACTIVE)
+    role = Column(Enum(UserRole), default=UserRole.USER)  # Изменено с two_factor_enabled на role
     registration_date = Column(DateTime, default=func.now())
     last_login = Column(DateTime)
     telegram_id = Column(String(50), unique=True)
-    two_factor_enabled = Column(Boolean, default=False)
 
     # Relationships
     wallets = relationship("Wallet", back_populates="user")
@@ -61,7 +71,31 @@ class User(Base):
     notifications = relationship("Notification", back_populates="user")
     sent_exchanges = relationship("Exchange", foreign_keys="Exchange.user_id_from", back_populates="user_from")
     received_exchanges = relationship("Exchange", foreign_keys="Exchange.user_id_to", back_populates="user_to")
+    interface = relationship("UserInterface", uselist=False, back_populates="user")
 
+    def has_telegram_linked(self):
+        return bool(self.telegram_id)
+
+    def can_receive_notifications(self):
+        return bool(self.telegram_id)
+
+    def is_admin(self):
+        return self.role == UserRole.ADMIN
+
+    def is_moderator(self):
+        return self.role == UserRole.MODERATOR
+
+    def is_user(self):
+        return self.role == UserRole.USER
+
+    def get_role_display(self):
+        """Получить отображаемое название роли"""
+        role_names = {
+            UserRole.USER: "Пользователь",
+            UserRole.MODERATOR: "Модератор",
+            UserRole.ADMIN: "Администратор"
+        }
+        return role_names.get(self.role, "Пользователь")
 
 class Session(Base):
     __tablename__ = 'sessions'
@@ -125,6 +159,12 @@ class Transaction(Base):
     currency_rel = relationship("Currency")
     commission = relationship("Commission", uselist=False, back_populates="transaction")
     notifications = relationship("Notification", back_populates="transaction")
+
+    def requires_confirmation(self):
+        return self.amount > 0.1
+
+    def can_be_confirmed(self):
+        return self.status == 'pending'
 
 
 class Exchange(Base):
@@ -191,3 +231,22 @@ class Notification(Base):
     user = relationship("User", back_populates="notifications")
     transaction = relationship("Transaction", back_populates="notifications")
     exchange = relationship("Exchange", back_populates="notifications")
+
+
+class UserInterface(Base):
+    __tablename__ = 'user_interface'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), unique=True)
+    theme = Column(Enum(Theme), default=Theme.LIGHT)
+    language = Column(String(10), default='ru')
+    notifications_enabled = Column(Boolean, default=True)
+    auto_login = Column(Boolean, default=False)
+    font_size = Column(Integer, default=12)
+    primary_color = Column(String(7), default='#2E8B57')  # SeaGreen
+    secondary_color = Column(String(7), default='#4682B4')  # SteelBlue
+    background_color = Column(String(7), default='#FFFFFF')  # White
+    text_color = Column(String(7), default='#333333')  # Dark Gray
+
+    # Relationships
+    user = relationship("User", back_populates="interface")
