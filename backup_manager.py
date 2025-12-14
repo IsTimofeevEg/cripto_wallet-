@@ -223,15 +223,6 @@ class BackupManager:
             return False, None, error_msg
 
     def restore_backup(self, backup_name):
-        """
-        Восстановление из указанного бэкапа
-
-        Args:
-            backup_name (str): Имя бэкапа для восстановления
-
-        Returns:
-            tuple: (success, error_message)
-        """
         try:
             logger.info(f"🔄 Восстановление из бэкапа: {backup_name}")
 

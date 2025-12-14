@@ -6,6 +6,7 @@ from models import User, Transaction, Wallet, Commission, Exchange, ExchangeStat
 from database import db
 from datetime import datetime
 import logging
+import os
 import time
 import random
 
@@ -636,6 +637,39 @@ class TelegramBot:
             logging.error(f"Error sending confirmation: {e}")
             return False
 
+    def send_pdf_document(self, user_telegram_id, pdf_file_path, caption=""):
+        """Отправка PDF документа с обработкой ошибок"""
+        try:
+            if not user_telegram_id:
+                return False
+
+            # Проверяем существование файла
+            if not os.path.exists(pdf_file_path):
+                logging.error(f"PDF file not found: {pdf_file_path}")
+                return False
+
+            # Проверяем размер файла (Telegram ограничивает 50MB)
+            file_size = os.path.getsize(pdf_file_path)
+            if file_size > 50 * 1024 * 1024:  # 50MB
+                logging.error(f"File too large: {file_size} bytes")
+                return False
+
+            # Отправляем файл
+            with open(pdf_file_path, 'rb') as pdf_file:
+                self.bot.send_document(
+                    user_telegram_id,
+                    pdf_file,
+                    caption=caption,
+                    parse_mode='Markdown'
+                )
+
+            logging.info(f"PDF sent successfully to {user_telegram_id}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Error sending PDF to {user_telegram_id}: {e}")
+            return False
+
     def send_exchange_request(self, user_telegram_id, exchange_id):
         """Отправка запроса на подтверждение обмена"""
         try:
@@ -707,6 +741,8 @@ class TelegramBot:
             logging.error(f"Error sending notification to {user_telegram_id}: {e}")
             return False
 
+
+
     def link_telegram_account(self, user_id, telegram_id):
         """Привязка Telegram аккаунта к пользователю с транзакцией"""
         session = db.get_session()
@@ -756,4 +792,4 @@ class TelegramBot:
 
 
 # Создаем экземпляр бота
-telegram_bot = TelegramBot("токен")
+telegram_bot = TelegramBot("token")

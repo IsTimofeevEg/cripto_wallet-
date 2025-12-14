@@ -381,6 +381,24 @@ class MainWindow(QMainWindow):
                 background-color: {self.adjust_color(colors['warning'], 15)};
             }}
 
+            /* Кнопка экспорта в PDF (фиолетовая) */
+            QPushButton[objectName="export_btn"] {{
+                background-color: #9C27B0;
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+                border-radius: 6px;
+                min-width: 120px;
+                font-size: {font_size}px;
+            }}
+            QPushButton[objectName="export_btn"]:hover {{
+                background-color: #BA68C8;
+            }}
+            QPushButton[objectName="export_btn"]:disabled {{
+                background-color: #cccccc;
+                color: #666666;
+            }}
+
             /* Вторичные кнопки */
             QPushButton[objectName="secondary_btn"] {{
                 background-color: {colors['secondary']};
@@ -757,6 +775,27 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
+        # Панель управления экспортом
+        export_panel = QHBoxLayout()
+
+        # Выбор периода
+        export_panel.addWidget(QLabel("Период:"))
+        self.export_period_combo = QComboBox()
+        self.export_period_combo.addItem("📅 За неделю", 7)
+        self.export_period_combo.addItem("📅 За месяц", 30)
+        self.export_period_combo.addItem("📅 За 3 месяца", 90)
+        self.export_period_combo.addItem("📅 За все время", 3650)  # 10 лет
+        export_panel.addWidget(self.export_period_combo)
+
+        # Кнопка экспорта
+        self.export_btn = QPushButton("📊 Экспорт в PDF")
+        self.export_btn.setObjectName("export_btn")
+        self.export_btn.clicked.connect(self.export_transaction_history)
+        export_panel.addWidget(self.export_btn)
+
+        export_panel.addStretch()
+        layout.addLayout(export_panel)
+
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(7)
         self.history_table.setHorizontalHeaderLabels([
@@ -774,6 +813,11 @@ class MainWindow(QMainWindow):
             self.load_history()
             self.load_exchange_rates()
             self.load_exchanges()
+
+            # Обновляем состояние кнопки экспорта
+            if hasattr(self, 'export_btn'):
+                self.export_btn.setEnabled(bool(self.user.telegram_id))
+
         except Exception as e:
             print(f"Error loading data: {e}")
             QMessageBox.warning(self, "Ошибка", f"Ошибка загрузки данных: {str(e)}")
@@ -1292,6 +1336,159 @@ class MainWindow(QMainWindow):
     def show_telegram_link_dialog(self):
         dialog = TelegramLinkDialog(self)
         dialog.exec_()
+
+    def export_transaction_history(self):
+        """Упрощенный экспорт истории транзакций"""
+        try:
+            # Проверка Telegram
+            if not self.user.telegram_id:
+                QMessageBox.warning(self, "Ошибка",
+                                    "Telegram не привязан!\n"
+                                    "Привяжите Telegram в настройках.")
+                return
+
+            # Получаем период
+            period_days = self.export_period_combo.currentData()
+            period_text = self.export_period_combo.currentText()
+
+            from datetime import datetime, timedelta
+            from sqlalchemy import and_
+
+            # Получаем транзакции
+            session = self.session_db
+            date_from = datetime.now() - timedelta(days=period_days)
+
+            transactions = (session.query(Transaction)
+                            .options(
+                joinedload(Transaction.user_from),
+                joinedload(Transaction.user_to),
+                joinedload(Transaction.currency_rel)
+            )
+                            .filter(
+                and_(
+                    (Transaction.user_id_from == self.user_id) |
+                    (Transaction.user_id_to == self.user_id),
+                    Transaction.created_date >= date_from
+                )
+            )
+                            .order_by(Transaction.created_date.desc())
+                            .all())
+
+            if not transactions:
+                QMessageBox.information(self, "Информация",
+                                        f"Нет транзакций за {period_text.lower()}.")
+                return
+
+            # Показываем что начинаем обработку
+            QMessageBox.information(self, "📤 Экспорт",
+                                    f"Начинаю экспорт истории...\n"
+                                    f"Период: {period_text}\n"
+                                    f"Транзакций: {len(transactions)}")
+
+            # Подготавливаем данные
+            transactions_data = []
+            for t in transactions:
+                if t.user_id_from == self.user_id:
+                    trans_type = "Отправка"
+                    counterparty = t.user_to.full_name if t.user_to else "Система"
+                else:
+                    trans_type = "Получение"
+                    counterparty = t.user_from.full_name if t.user_from else "Система"
+
+                status_map = {
+                    'completed': '✅ Выполнено',
+                    'pending': '⏳ Ожидание',
+                    'cancelled': '❌ Отменено',
+                    'failed': '❌ Ошибка'
+                }
+                status = status_map.get(t.status, t.status)
+
+                transactions_data.append({
+                    'date': t.created_date.strftime("%d.%m.%Y %H:%M"),
+                    'type': trans_type,
+                    'currency': t.currency_rel.code if t.currency_rel else "N/A",
+                    'amount': t.amount,
+                    'counterparty': counterparty,
+                    'status': status
+                })
+
+            user_info = {
+                'id': self.user.id,
+                'name': self.user.full_name,
+                'phone': self.user.phone,
+                'role': self.user.get_role_display()
+            }
+
+            period_info = f"{period_text} (с {date_from.strftime('%d.%m.%Y')})"
+
+            # Пробуем создать PDF
+            try:
+                from pdf_generation import PDFGenerator
+                pdf_file = PDFGenerator.generate_transaction_history(
+                    transactions_data, user_info, period_info
+                )
+
+                if not pdf_file or not os.path.exists(pdf_file):
+                    QMessageBox.critical(self, "Ошибка", "Не удалось создать PDF файл")
+                    return
+
+                # Отправляем через Telegram
+                from bot import telegram_bot
+
+                caption = (f"📊 История транзакций\n\n"
+                           f"👤 {self.user.full_name}\n"
+                           f"📱 {self.user.phone}\n"
+                           f"{period_text}\n"
+                           f"📈 {len(transactions)} транзакций\n"
+                           f"🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+
+                # Отправляем с обработкой исключений
+                try:
+                    success = telegram_bot.send_pdf_document(
+                        self.user.telegram_id,
+                        pdf_file,
+                        caption
+                    )
+
+                    if success:
+                        # Успех - показываем сообщение
+                        QMessageBox.information(self, "✅ Успешно",
+                                                f"Файл отправлен в Telegram!\n\n"
+                                                f"Период: {period_text}\n"
+                                                f"Транзакций: {len(transactions)}\n\n"
+                                                f"Проверьте чат с ботом.")
+                    else:
+                        QMessageBox.warning(self, "❌ Ошибка",
+                                            "Не удалось отправить файл.\n"
+                                            "Возможные причины:\n"
+                                            "• Нет интернета\n"
+                                            "• Бот не запущен\n"
+                                            "• Проблемы с Telegram API")
+
+                except Exception as send_error:
+                    QMessageBox.critical(self, "Ошибка отправки",
+                                         f"Ошибка при отправке:\n{str(send_error)}")
+
+            except ImportError:
+                QMessageBox.critical(self, "Ошибка",
+                                     "Библиотека reportlab не установлена!\n\n"
+                                     "Установите командой:\n"
+                                     "pip install reportlab")
+            except Exception as pdf_error:
+                QMessageBox.critical(self, "Ошибка создания PDF",
+                                     f"Ошибка: {str(pdf_error)}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка экспорта",
+                                 f"Ошибка: {str(e)}")
+
+    def show_simple_message(self, title, message):
+        """Простое сообщение без лишних кнопок"""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.exec_()
 
     def closeEvent(self, event):
         self.rates_timer.stop()
